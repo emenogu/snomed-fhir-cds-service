@@ -58,7 +58,7 @@ public class MedicationInterationCDSTrigger extends CDSTrigger {
             return "";
         }
 
-        return "\\"" + ruleLabel.trim() + "\\"";
+        return "\"" + ruleLabel.trim() + "\"";
     }
 
 }
