@@ -95,7 +95,6 @@ public abstract class CDSTrigger {
                         return builder.toString();
                 }
         }
-	}
 
 	public String getMedicationLabel() {
 		return medicationLabel;
