@@ -1,0 +1,32 @@
+name: NMHS CDSS Null Display Validation V2
+
+on:
+  push:
+    branches:
+      - g5-cdss-null-display-fallback-v1-hosted-validation-v2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Maven regression validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout exact control commit
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: corretto
+          java-version: '17'
+          cache: maven
+
+      - name: Focused null-display regression tests
+        run: mvn -B -ntp -Dtest=MedicationInterationCDSTriggerTest test
+
+      - name: Full Maven test and package
+        run: mvn -B -ntp clean package
