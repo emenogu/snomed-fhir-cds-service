@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -71,23 +72,29 @@ public abstract class CDSTrigger {
 	}
 
 	public String toHumanReadable(Collection<Coding> codings) {
-		Collection<String> codingsDisplay = codings.stream().map(Coding::getDisplay).collect(Collectors.toSet());
-		if (codingsDisplay.isEmpty()) {
-			return "";
-		} else if (codingsDisplay.size() == 1) {
-			return format("\"%s\"", codingsDisplay.iterator().next());
-		} else {
-			StringBuilder builder = new StringBuilder();
-			for (String codingDisplay : codingsDisplay) {
-				if (!builder.isEmpty()) {
-					builder.append(" and ");
-				}
-				builder.append("\"");
-				builder.append(codingDisplay);
-				builder.append("\"");
-			}
-			return builder.toString();
-		}
+                Collection<String> codingsDisplay = codings.stream()
+                                .map(Coding::getDisplay)
+                                .filter(Objects::nonNull)
+                                .map(String::trim)
+                                .filter(display -> !display.isEmpty())
+                                .collect(Collectors.toSet());
+                if (codingsDisplay.isEmpty()) {
+                        return "";
+                } else if (codingsDisplay.size() == 1) {
+                        return format("\"%s\"", codingsDisplay.iterator().next());
+                } else {
+                        StringBuilder builder = new StringBuilder();
+                        for (String codingDisplay : codingsDisplay) {
+                                if (!builder.isEmpty()) {
+                                        builder.append(" and ");
+                                }
+                                builder.append("\"");
+                                builder.append(codingDisplay);
+                                builder.append("\"");
+                        }
+                        return builder.toString();
+                }
+        }
 	}
 
 	public String getMedicationLabel() {

@@ -37,11 +37,28 @@ public class MedicationInterationCDSTrigger extends CDSTrigger {
         }
 
         text = text.replace("{{RuleMedication1}}", getMedicationLabel());
-        text = text.replace("{{ActualMedication1}}", toHumanReadable(medication1Intersection));
+        text = text.replace(
+                "{{ActualMedication1}}",
+                toHumanReadableOrRuleLabel(medication1Intersection, getMedicationLabel()));
         text = text.replace("{{RuleMedication2}}", getMedication2Label());
-        text = text.replace("{{ActualMedication2}}", toHumanReadable(medication2Intersection));
+        text = text.replace(
+                "{{ActualMedication2}}",
+                toHumanReadableOrRuleLabel(medication2Intersection, getMedication2Label()));
 
         return text;
+    }
+
+    private String toHumanReadableOrRuleLabel(Collection<Coding> codings, String ruleLabel) {
+        String actualMedication = toHumanReadable(codings);
+        if (!actualMedication.isBlank()) {
+            return actualMedication;
+        }
+
+        if (ruleLabel == null || ruleLabel.isBlank()) {
+            return "";
+        }
+
+        return """ + ruleLabel.trim() + """;
     }
 
 }
