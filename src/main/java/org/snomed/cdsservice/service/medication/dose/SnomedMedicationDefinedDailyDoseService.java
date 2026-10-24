@@ -173,23 +173,39 @@ public class SnomedMedicationDefinedDailyDoseService {
                 }
 
                 String manufacturedDoseForm = normalForm.getAttributes().get(ATTRIBUTE_HAS_MANUFACTURED_DOSE_FORM);
-                if (manufacturedDoseForm == null) {
-                    logger.info("SNOMED drug {} has no manufactured does form, skipping.", snomedMedicationCode);
-                    continue;
-                }
                 String atcRouteOfAdministrationCode = null;
                 String routeOfAdministrationLabel = null;
-                for (ManyToOneMapEntry manyToOneMapEntry : doseFormsManySnomedToOneAtcCodeMap) {
-                    if (manyToOneMapEntry.sourceCodes().contains(manufacturedDoseForm)) {
-                        atcRouteOfAdministrationCode = manyToOneMapEntry.targetCode();
-                        routeOfAdministrationLabel = manyToOneMapEntry.label() != null ? manyToOneMapEntry.label() : atcRouteOfAdministrationCode;
+                boolean routeFromPrescription = false;
+                if (manufacturedDoseForm == null) {
+                    // NMHS CDSS-HDA-002: some terminology releases omit "Has manufactured dose form" for clinical drugs
+                    // (e.g. 322236009 in the UK Clinical Edition 20260826, present in the International Edition).
+                    // Use the prescribed route (already mapped to an ATC route by fhir-cdss-int) instead of skipping.
+                    String prescribedRoute = dosage.getRoute() != null ? dosage.getRoute().getText() : null;
+                    for (ManyToOneMapEntry manyToOneMapEntry : doseFormsManySnomedToOneAtcCodeMap) {
+                        if (manyToOneMapEntry.targetCode().equals(prescribedRoute)) {
+                            atcRouteOfAdministrationCode = manyToOneMapEntry.targetCode();
+                            routeOfAdministrationLabel = manyToOneMapEntry.label() != null ? manyToOneMapEntry.label() : atcRouteOfAdministrationCode;
+                        }
+                    }
+                    if (atcRouteOfAdministrationCode == null) {
+                        logger.info("SNOMED drug {} has no manufactured dose form and no usable prescribed route, skipping.", snomedMedicationCode);
+                        continue;
+                    }
+                    routeFromPrescription = true;
+                    logger.info("SNOMED drug {} has no manufactured dose form; using prescribed route {}.", snomedMedicationCode, atcRouteOfAdministrationCode);
+                } else {
+                    for (ManyToOneMapEntry manyToOneMapEntry : doseFormsManySnomedToOneAtcCodeMap) {
+                        if (manyToOneMapEntry.sourceCodes().contains(manufacturedDoseForm)) {
+                            atcRouteOfAdministrationCode = manyToOneMapEntry.targetCode();
+                            routeOfAdministrationLabel = manyToOneMapEntry.label() != null ? manyToOneMapEntry.label() : atcRouteOfAdministrationCode;
+                        }
+                    }
+                    if (atcRouteOfAdministrationCode == null) {
+                        logger.info("SNOMED dose form {} is not covered by the route of administration dynamic map, skipping", manufacturedDoseForm);
+                        continue;
                     }
                 }
-                if (atcRouteOfAdministrationCode == null) {
-                    logger.info("SNOMED dose form {} is not covered by the route of administration dynamic map, skipping", manufacturedDoseForm);
-                    continue;
-                }
-                if (!(dosage.getRoute() != null && atcRouteOfAdministrationCode.equals(dosage.getRoute().getText()))) {
+                if (!routeFromPrescription && !(dosage.getRoute() != null && atcRouteOfAdministrationCode.equals(dosage.getRoute().getText()))) {
                     String expectedUnit = atcRouteOfAdministrationCode + (routeOfAdministrationLabel.equals(atcRouteOfAdministrationCode) ? "" : " (" + routeOfAdministrationLabel.trim() + ")" );
                     logger.info("Expected route {} for medication {}", expectedUnit, snomedMedicationLabel);
                     composeCdssCardForDosageMismatch(cards, snomedMedicationLabel, codingList, expectedUnit, false);
@@ -405,6 +421,14 @@ public class SnomedMedicationDefinedDailyDoseService {
 
         String strengthDisplayUnit = getSnomedParameterValue(strengthUnit, "display");
         String denominatorDisplayUnit = getSnomedParameterValue(denominatorUnit, "display");
+        // NMHS CDSS-HDA-002: a dose prescribed as an amount of the substance itself (e.g. 500 mg of a 500 mg tablet,
+        // 80 mg of a 40 mg/mL injection) is already in strength units: convert it directly, without the
+        // strength/denominator factor. Only when the dose unit is not the product's denominator unit
+        // (so "2 g" of a mg/g cream still takes the strength path).
+        Double substanceFactor = UnitConversion.factorOfConversion(prescribedDisplayUnit, strengthDisplayUnit);
+        if (substanceFactor != null && UnitConversion.factorOfConversion(prescribedDisplayUnit, denominatorDisplayUnit) == null) {
+            return new PrescribedDailyDose(prescribedDoseQuantity.multiply(BigDecimal.valueOf(substanceFactor)), strengthDisplayUnit);
+        }
         try {
             BigDecimal prescribedDoseQuantityInUnitOfSubstanceStrength = prescribedDoseQuantity.multiply((new BigDecimal(strengthValue)).divide(new BigDecimal(denominatorValue))).multiply(new BigDecimal(UnitConversion.factorOfConversion(prescribedDisplayUnit, denominatorDisplayUnit)));
             return new PrescribedDailyDose(prescribedDoseQuantityInUnitOfSubstanceStrength, strengthDisplayUnit);

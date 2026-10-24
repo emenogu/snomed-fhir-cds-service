@@ -28,6 +28,7 @@ import org.springframework.util.StreamUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -51,6 +52,7 @@ class MedicationOrderSelectCDSServiceTest {
     private static final String CONTRAINDICATION_ALERT_TYPE = "Contraindication";
     private static final String HIGH_DOSAGE_ALERT_TYPE = "High Dosage";
 	private static final String INVALID_DOSAGE_ALERT_TYPE = "Validation Error";
+	private static final String NO_DOSE_FORM_DRUG = "999000000000001";
 
 	@Autowired
     SnomedMedicationDefinedDailyDoseService snomedMedicationDefinedDailyDoseService;
@@ -99,6 +101,9 @@ class MedicationOrderSelectCDSServiceTest {
         when(mockTsClient.lookup(eq(SNOMEDCT_SYSTEM), eq("258685003"))).thenReturn(getConceptParamsForDoseUnitMcg());
         when(mockTsClient.lookup(eq(SNOMEDCT_SYSTEM), eq("387413002"))).thenReturn(getConceptParamsForSubstanceColchicine());
         when(mockTsClient.lookup(eq(SNOMEDCT_SYSTEM), eq("dummyCode"))).thenThrow(new RuntimeException("dummy exception"));
+        when(mockTsClient.lookup(eq(SNOMEDCT_SYSTEM), eq(NO_DOSE_FORM_DRUG))).thenReturn(minimalConceptParams(NO_DOSE_FORM_DRUG,
+                "Ramipril 5 mg oral tablet (no dose form)",
+                "780345000 : 1142139005 = #1, { 762949000 = 386872004, 732943007 = 386872004, 1142135004 = #5, 732945000 = 258684004, 1142136003 = #1, 732947008 = 732936001 }"));
         when(mockDoseFormsLoaderService.loadDoseFormMap()).thenReturn(getMockMapList());
         snomedMedicationDefinedDailyDoseService.setDoseFormsManySnomedToOneAtcCodeMap(getMockMapList());
     }
@@ -419,6 +424,63 @@ class MedicationOrderSelectCDSServiceTest {
 		assertThrows(ResponseStatusException.class, () ->service.call(cdsRequest) );
 	}
 
+
+	// NMHS CDSS-HDA-002
+	@Test
+	public void shouldReturnOverDoseAlert_WhenDoseIsPrescribedAsAmountOfSubstance() {
+		// Ramipril 5 mg tablet, 10 mg once a day = 10 mg/day vs DDD 2.5 mg -> 4x (warning)
+		List<CDSCard> cards = service.call(requestWithSingleDraft("408051007", "Ramipril 5 mg oral tablet", 10, "mg", "O"));
+		assertEquals(1, cards.size());
+		assertEquals(HIGH_DOSAGE_ALERT_TYPE, cards.get(0).getAlertType());
+		assertEquals("The amount of Ramipril prescribed is 4 times the average daily dose.", cards.get(0).getSummary());
+		assertEquals(CDSIndicator.warning, cards.get(0).getIndicator());
+	}
+
+	@Test
+	public void shouldUsePrescribedRoute_WhenClinicalDrugHasNoManufacturedDoseForm() {
+		// 2 tablets of 5 mg once a day = 10 mg/day -> 4x (warning), route taken from the prescription
+		List<CDSCard> cards = service.call(requestWithSingleDraft(NO_DOSE_FORM_DRUG, "Ramipril 5 mg oral tablet (no dose form)", 2, "Tablet", "O"));
+		assertEquals(1, cards.size());
+		assertEquals(HIGH_DOSAGE_ALERT_TYPE, cards.get(0).getAlertType());
+		assertEquals("The amount of Ramipril prescribed is 4 times the average daily dose.", cards.get(0).getSummary());
+	}
+
+	@Test
+	public void shouldSkipSilently_WhenNoManufacturedDoseFormAndPrescribedRouteIsUnknown() {
+		List<CDSCard> cards = service.call(requestWithSingleDraft(NO_DOSE_FORM_DRUG, "Ramipril 5 mg oral tablet (no dose form)", 2, "Tablet", "NA"));
+		assertEquals(0, cards.size());
+	}
+
+	private CDSRequest requestWithSingleDraft(String code, String display, double dose, String unit, String route) {
+		String bundle = """
+				{"resourceType":"Bundle","entry":[{"resource":{"resourceType":"MedicationRequest","id":"nmhs-1","status":"active","intent":"order",
+				"medicationCodeableConcept":{"coding":[{"system":"http://snomed.info/sct","code":"%s","display":"%s"}],"text":"%s"},
+				"subject":{"reference":"Patient/618b2992-eec7-45c9-8544-12c9f586b78c"},
+				"dosageInstruction":[{"timing":{"repeat":{"frequency":1,"period":1,"periodUnit":"d"}},
+				"doseAndRate":[{"doseQuantity":{"value":%s,"unit":"%s"}}],"route":{"coding":[{"display":"%s"}],"text":"%s"}}]}}]}
+				""".formatted(code, display, display, BigDecimal.valueOf(dose).stripTrailingZeros().toPlainString(), unit, route, route);
+		try {
+			CDSRequest cdsRequest = new CDSRequest();
+			cdsRequest.setPrefetchStrings(Map.of(
+					"patient", StreamUtils.copyToString(getClass().getResourceAsStream("/medication-order-select/PatientResource.json"), StandardCharsets.UTF_8),
+					"conditions", "{\"resourceType\":\"Bundle\",\"entry\":[]}",
+					"draftMedicationRequests", bundle));
+			return cdsRequest;
+		} catch (IOException e) {
+			throw new IllegalStateException(e);
+		}
+	}
+
+	private ConceptParameters minimalConceptParams(String code, String display, String normalFormTerse) {
+		String response = """
+				{"resourceType":"Parameters","parameter":[{"name":"code","valueString":"%s"},{"name":"display","valueString":"%s"},
+				{"name":"property","part":[{"name":"code","valueString":"normalFormTerse"},{"name":"valueString","valueString":"%s"}]}]}
+				""".formatted(code, display, normalFormTerse);
+		Parameters parameters = FhirContext.forR4().newJsonParser().parseResource(Parameters.class, response);
+		ConceptParameters conceptParameters = new ConceptParameters();
+		conceptParameters.setParameter(parameters.getParameter());
+		return conceptParameters;
+	}
 
     private ConceptParameters getConceptParamsForDoseUnitMg() {
         String response = "{\"resourceType\":\"Parameters\",\"parameter\":[{\"name\":\"code\",\"valueString\":\"258684004\"},{\"name\":\"display\",\"valueString\":\"mg\"},{\"name\":\"name\",\"valueString\":\"SNOMED CT release 2023-05-31\"},{\"name\":\"system\",\"valueString\":\"http://snomed.info/sct\"},{\"name\":\"version\",\"valueString\":\"http://snomed.info/sct/900000000000207008/version/20230531\"},{\"name\":\"inactive\",\"valueBoolean\":false},{\"name\":\"property\",\"part\":[{\"name\":\"code\",\"valueString\":\"effectiveTime\"},{\"name\":\"valueString\",\"valueString\":\"20020131\"}]},{\"name\":\"property\",\"part\":[{\"name\":\"code\",\"valueString\":\"moduleId\"},{\"name\":\"value\",\"valueCode\":\"900000000000207008\"}]},{\"name\":\"property\",\"part\":[{\"name\":\"code\",\"valueString\":\"inactive\"},{\"name\":\"valueBoolean\",\"valueString\":\"false\"}]},{\"name\":\"property\",\"part\":[{\"name\":\"code\",\"valueString\":\"sufficientlyDefined\"},{\"name\":\"valueBoolean\",\"valueString\":\"false\"}]},{\"name\":\"property\",\"part\":[{\"name\":\"code\",\"valueString\":\"normalFormTerse\"},{\"name\":\"valueString\",\"valueString\":\"258681007\"}]},{\"name\":\"property\",\"part\":[{\"name\":\"code\",\"valueString\":\"normalForm\"},{\"name\":\"valueString\",\"valueString\":\"258681007|International System of Units unit of mass (qualifier value)|\"}]},{\"extension\":[{\"url\":\"http://snomed.info/fhir/StructureDefinition/designation-use-context\",\"extension\":[{\"url\":\"context\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000509007\"}},{\"url\":\"role\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000548007\",\"display\":\"PREFERRED\"}},{\"url\":\"type\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000003001\",\"display\":\"Fully specified name\"}}]},{\"url\":\"http://snomed.info/fhir/StructureDefinition/designation-use-context\",\"extension\":[{\"url\":\"context\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000508004\"}},{\"url\":\"role\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000548007\",\"display\":\"PREFERRED\"}},{\"url\":\"type\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000003001\",\"display\":\"Fully specified name\"}}]}],\"name\":\"designation\",\"part\":[{\"name\":\"language\",\"valueCode\":\"en\"},{\"name\":\"use\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000003001\",\"display\":\"Fully specified name\"}},{\"name\":\"value\",\"valueString\":\"milligram (qualifier value)\"}]},{\"extension\":[{\"url\":\"http://snomed.info/fhir/StructureDefinition/designation-use-context\",\"extension\":[{\"url\":\"context\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000509007\"}},{\"url\":\"role\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000548007\",\"display\":\"PREFERRED\"}},{\"url\":\"type\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000013009\",\"display\":\"Synonym\"}}]},{\"url\":\"http://snomed.info/fhir/StructureDefinition/designation-use-context\",\"extension\":[{\"url\":\"context\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000508004\"}},{\"url\":\"role\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000548007\",\"display\":\"PREFERRED\"}},{\"url\":\"type\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000013009\",\"display\":\"Synonym\"}}]}],\"name\":\"designation\",\"part\":[{\"name\":\"language\",\"valueCode\":\"en\"},{\"name\":\"use\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000013009\",\"display\":\"Synonym\"}},{\"name\":\"value\",\"valueString\":\"mg\"}]},{\"extension\":[{\"url\":\"http://snomed.info/fhir/StructureDefinition/designation-use-context\",\"extension\":[{\"url\":\"context\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000509007\"}},{\"url\":\"role\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000549004\",\"display\":\"ACCEPTABLE\"}},{\"url\":\"type\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000013009\",\"display\":\"Synonym\"}}]},{\"url\":\"http://snomed.info/fhir/StructureDefinition/designation-use-context\",\"extension\":[{\"url\":\"context\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000508004\"}},{\"url\":\"role\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000549004\",\"display\":\"ACCEPTABLE\"}},{\"url\":\"type\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000013009\",\"display\":\"Synonym\"}}]}],\"name\":\"designation\",\"part\":[{\"name\":\"language\",\"valueCode\":\"en\"},{\"name\":\"use\",\"valueCoding\":{\"system\":\"http://snomed.info/sct\",\"code\":\"900000000000013009\",\"display\":\"Synonym\"}},{\"name\":\"value\",\"valueString\":\"milligram\"}]},{\"name\":\"property\",\"part\":[{\"name\":\"code\",\"valueString\":\"parent\"},{\"name\":\"value\",\"valueCode\":\"258681007\"}]}]}";
