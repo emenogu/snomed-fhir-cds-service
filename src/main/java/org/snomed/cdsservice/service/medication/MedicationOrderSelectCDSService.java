@@ -11,6 +11,7 @@ import org.snomed.cdsservice.model.CDSReference;
 import org.snomed.cdsservice.model.CDSTrigger;
 import org.snomed.cdsservice.rest.pojo.CDSRequest;
 import org.snomed.cdsservice.service.*;
+import org.snomed.cdsservice.service.medication.dose.NmhsDoseLimitService;
 import org.snomed.cdsservice.service.medication.dose.SnomedMedicationDefinedDailyDoseService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -36,6 +37,9 @@ public class MedicationOrderSelectCDSService extends CDSService {
 
 	@Autowired
 	private SnomedMedicationDefinedDailyDoseService definedDailyDoseService;
+
+	@Autowired
+	private NmhsDoseLimitService nmhsDoseLimitService;
 
 	private List<CDSTrigger> medicationOrderSelectTriggers;
 
@@ -87,7 +91,12 @@ public class MedicationOrderSelectCDSService extends CDSService {
 			}
 		});
 
-		cards.addAll(definedDailyDoseService.checkMedications(medicationRequests));
+		// NMHS CDSS-HDA-003: formulary dose limits first; drugs they cover skip the WHO-DDD check (one dose card per drug).
+		NmhsDoseLimitService.Result doseLimitResult = nmhsDoseLimitService.check(medicationRequests);
+		cards.addAll(doseLimitResult.cards());
+		List<MedicationRequest> notCoveredByDoseLimits = medicationRequests.stream()
+				.filter(request -> !doseLimitResult.covered().contains(request)).collect(Collectors.toList());
+		cards.addAll(definedDailyDoseService.checkMedications(notCoveredByDoseLimits));
 
 		return cards;
 	}
