@@ -92,7 +92,10 @@ public class MedicationOrderSelectCDSService extends CDSService {
 		});
 
 		// NMHS CDSS-HDA-003: formulary dose limits first; drugs they cover skip the WHO-DDD check (one dose card per drug).
-		NmhsDoseLimitService.Result doseLimitResult = nmhsDoseLimitService.check(medicationRequests);
+		// NMHS CDSS-HDA-004: age (patient prefetch) and recent body weight (bodyWeight prefetch) for weight-based limits
+		NmhsDoseLimitService.PatientContext patientContext = nmhsDoseLimitService.contextFrom(
+				prefetch.get("patient"), prefetch.get("bodyWeight"), parser, java.time.LocalDate.now());
+		NmhsDoseLimitService.Result doseLimitResult = nmhsDoseLimitService.check(medicationRequests, patientContext);
 		cards.addAll(doseLimitResult.cards());
 		List<MedicationRequest> notCoveredByDoseLimits = medicationRequests.stream()
 				.filter(request -> !doseLimitResult.covered().contains(request)).collect(Collectors.toList());

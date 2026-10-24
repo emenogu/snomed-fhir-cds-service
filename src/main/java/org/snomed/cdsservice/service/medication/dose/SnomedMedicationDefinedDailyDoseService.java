@@ -150,7 +150,8 @@ public class SnomedMedicationDefinedDailyDoseService {
             if (snomedMedication.isPresent()) {
                 String snomedMedicationCode = snomedMedication.get().getCode();
                 String snomedMedicationLabel = snomedMedication.get().getDisplay();
-                if ("NA".equals(doseQuantity.getUnit())) {
+                // NMHS CDSS-HDA-004: IU and units of presentation are checked by the NMHS dose-limit rule only
+                if ("NA".equals(doseQuantity.getUnit()) || "IU".equals(doseQuantity.getUnit()) || "Unit".equals(doseQuantity.getUnit())) {
                     logger.debug("Prescribed dosage could not be validated for {}. Reason: Dose unit unknown to CDSS.", snomedMedicationLabel);
                     continue;
                 }
