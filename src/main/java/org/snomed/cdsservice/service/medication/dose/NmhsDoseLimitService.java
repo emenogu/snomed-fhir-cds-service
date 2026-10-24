@@ -452,8 +452,9 @@ public class NmhsDoseLimitService {
         return Integer.valueOf(s.trim());
     }
 
-    private static String fmt(BigDecimal v) {
-        BigDecimal r = v.abs().compareTo(BigDecimal.TEN) >= 0 ? v.setScale(0, RoundingMode.HALF_UP) : v.round(new MathContext(3));
+    /** Display value: one decimal place from 10 upwards (so 52.5 ml/kg or 22.5 mg is never shown rounded), else 3 significant digits. */
+    static String fmt(BigDecimal v) {
+        BigDecimal r = v.abs().compareTo(BigDecimal.TEN) >= 0 ? v.setScale(1, RoundingMode.HALF_UP) : v.round(new MathContext(3));
         return r.stripTrailingZeros().toPlainString();
     }
 

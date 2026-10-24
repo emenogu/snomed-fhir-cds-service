@@ -226,6 +226,15 @@ class NmhsDoseLimitServiceTest {
     }
 
     @Test
+    void displayedValuesAreNotRoundedAwayFromTheLimit() {
+        assertEquals("52.5", NmhsDoseLimitService.fmt(new java.math.BigDecimal("52.5")));
+        assertEquals("22.5", NmhsDoseLimitService.fmt(new java.math.BigDecimal("22.50")));
+        assertEquals("1125", NmhsDoseLimitService.fmt(new java.math.BigDecimal("1125.000")));
+        assertEquals("13.3", NmhsDoseLimitService.fmt(new java.math.BigDecimal("13.3333")));
+        assertEquals("0.15", NmhsDoseLimitService.fmt(new java.math.BigDecimal("0.150")));
+    }
+
+    @Test
     void hourlyIntervalIsExactAtTheBoundary() {
         assertTrue(adult(request(METHYLDOPA, 1000, "mg", 1, 8, Timing.UnitsOfTime.H, "O")).isEmpty()); // exactly 3000
     }
